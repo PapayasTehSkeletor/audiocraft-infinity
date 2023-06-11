@@ -1,6 +1,9 @@
 # Audiocraft
 Audiocraft is a PyTorch library made by Meta for deep learning research on audio generation. At the moment, it contains the code for MusicGen, a state-of-the-art controllable text-to-music model.
 
+## Audiocraft infinity
+Adds generation of songs with a length of over 30 seconds.
+Disables (hopefully) the gradio analytics.
 
 ## Installation
 Audiocraft requires Python 3.9, PyTorch 2.0.0, and a GPU with at least 16 GB of memory (for the medium-sized model). To install Audiocraft, you can run the following:
