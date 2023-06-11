@@ -6,7 +6,7 @@ Adds generation of songs with a length of over 30 seconds.
 Disables (hopefully) the gradio analytics.
 
 ## Installation
-Audiocraft requires Python 3.9, PyTorch 2.0.0, and a GPU with at least 16 GB of memory (for the medium-sized model). To install Audiocraft, you can run the following:
+Audiocraft requires Python 3.9, PyTorch 2.0.0. To install Audiocraft, you can run the following:
 
 ```shell
 # Best to make sure you have torch installed first, in particular before installing xformers.
