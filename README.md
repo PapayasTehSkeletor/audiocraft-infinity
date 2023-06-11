@@ -74,3 +74,6 @@ for idx, one_wav in enumerate(wav):
 
 ## License
 * The code in this repository is released under the AGPLv3 license as found in the [LICENSE file](LICENSE).
+
+## Copyright notice
+Copyright (c) Meta Platforms, Inc. and affiliates.
