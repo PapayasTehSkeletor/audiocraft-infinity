@@ -7,8 +7,8 @@ import datetime
 import torchaudio
 from audiocraft.models import MusicGen
 from audiocraft.data.audio import audio_write
-import wave
-import contextlib
+import wave ######
+import contextlib #############
 
 os.environ['GRADIO_ANALYTICS_ENABLED'] = 'False'
 MODEL = None
@@ -32,12 +32,11 @@ def initial_generate(melody_boolean, MODEL, text, melody, msr, continue_file, du
         with contextlib.closing(wave.open(continue_file,'r')) as f:
             frames = f.getnframes()
             rate = f.getframerate()
-            duration = frames / float(rate)
-            sliding_window_seconds = duration
+            sliding_window_seconds = frames / float(rate)
 
         if wav.dim() == 2:
             wav = wav[None]
-        wav = wav[:, :, int(-cfsr * min(25,sliding_window_seconds,duration-5,cf_cutoff)):]
+        wav = wav[:, :, int(-cfsr * min(25,sliding_window_seconds,duration,cf_cutoff)):]
         new_chunk = MODEL.generate_continuation(wav, descriptions=[text], prompt_sample_rate=cfsr,progress=False)
         wav = new_chunk
     else:
