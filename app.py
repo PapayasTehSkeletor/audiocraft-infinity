@@ -4,8 +4,11 @@ import os
 import torch
 import requests
 import datetime
+import torchaudio
 from audiocraft.models import MusicGen
 from audiocraft.data.audio import audio_write
+import wave
+import contextlib
 
 os.environ['GRADIO_ANALYTICS_ENABLED'] = 'False'
 MODEL = None
@@ -19,8 +22,38 @@ requests.get = original_get
 def load_model(version):
     print("Loading model", version)
     return MusicGen.get_pretrained(version)
-def generate(model, text, melody, duration, topk, topp, temperature, cfg_coef,base_duration, sliding_window_seconds):
-    
+
+def initial_generate(melody_boolean, MODEL, text, melody, msr, continue_file, duration, cf_cutoff):
+    wav = None
+    if continue_file:
+        data_waveform, cfsr = (torchaudio.load(continue_file))
+        wav = data_waveform.cuda()
+        sliding_window_seconds=0
+        with contextlib.closing(wave.open(continue_file,'r')) as f:
+            frames = f.getnframes()
+            rate = f.getframerate()
+            duration = frames / float(rate)
+            sliding_window_seconds = duration
+
+        if wav.dim() == 2:
+            wav = wav[None]
+        wav = wav[:, :, int(-cfsr * min(25,sliding_window_seconds,duration-5,cf_cutoff)):]
+        new_chunk = MODEL.generate_continuation(wav, descriptions=[text], prompt_sample_rate=cfsr,progress=False)
+        wav = new_chunk
+    else:
+        if melody_boolean:
+            wav = MODEL.generate_with_chroma(
+                descriptions=[text],
+                melody_wavs=melody,
+                melody_sample_rate=msr,
+                progress=False
+            )
+        else:
+            wav = MODEL.generate(descriptions=[text], progress=False)
+    return wav
+
+def generate(model, text, melody, duration, topk, topp, temperature, cfg_coef,base_duration, sliding_window_seconds, continue_file, cf_cutoff):
+    print(melody)
     final_length_seconds = duration
     descriptions = text
     global MODEL
@@ -54,7 +87,6 @@ def generate(model, text, melody, duration, topk, topp, temperature, cfg_coef,ba
     wav = None # wav shape will be [1, 1, sr * seconds]
     melody_boolean = False
     if melody:
-        print("test")
         msr, melody = melody[0], torch.from_numpy(melody[1]).to(MODEL.device).float().t().unsqueeze(0)
         print(melody.shape)
         if melody.dim() == 2:
@@ -64,34 +96,20 @@ def generate(model, text, melody, duration, topk, topp, temperature, cfg_coef,ba
     
     if(duration > 30):
         for i in range(iterations_required):
-                print(f"Generating {i + 1}/{iterations_required}")
-                if i == 0:
-                    if melody_boolean:
-                        wav = MODEL.generate_with_chroma(
-                            descriptions=[text],
-                            melody_wavs=melody,
-                            melody_sample_rate=msr,
-                            progress=False
-                        )
-                    else:
-                        wav = MODEL.generate(descriptions=[text], progress=False)
-                    # take only first sliding_window_seconds, sometimes the model generates fading-out music, which results in a continuation into silence 
-                    wav = wav[:, :, :sr * sliding_window_seconds]
-                else:
-                    new_chunk=None
-                    previous_chunk = wav[:, :, -sr * (base_duration - sliding_window_seconds):]
-                    new_chunk = MODEL.generate_continuation(previous_chunk, descriptions=[text], prompt_sample_rate=sr,progress=False)
-                    wav = torch.cat((wav, new_chunk[:, :, -sr * sliding_window_seconds:]), dim=2)
+            print(f"Generating {i + 1}/{iterations_required}")
+            if i == 0:
+                wav = initial_generate(melody_boolean, MODEL, text, melody, msr, continue_file,base_duration, cf_cutoff)
+                wav = wav[:, :, :sr * sliding_window_seconds]
+            else:
+                new_chunk=None
+                previous_chunk = wav[:, :, -sr * (base_duration - sliding_window_seconds):]
+                print(previous_chunk)
+                new_chunk = MODEL.generate_continuation(previous_chunk, descriptions=[text], prompt_sample_rate=sr,progress=False)
+                print(new_chunk)
+                wav = torch.cat((wav, new_chunk[:, :, -sr * sliding_window_seconds:]), dim=2)
     else:
-        if melody_boolean:
-            wav = MODEL.generate_with_chroma(
-                descriptions=[text],
-                melody_wavs=melody,
-                melody_sample_rate=msr,
-                progress=False
-            )
-        else:
-            wav = MODEL.generate(descriptions=[text], progress=False)
+        wav = initial_generate(melody_boolean, MODEL, text, melody, msr, continue_file, duration, cf_cutoff)
+
     print(f"Final length: {wav.shape[2] / sr}s")
 
     output = wav.detach().cpu().numpy()
@@ -99,50 +117,32 @@ def generate(model, text, melody, duration, topk, topp, temperature, cfg_coef,ba
 
 
 with gr.Blocks(analytics_enabled=False) as demo:
-    gr.Markdown(
-        """
-        # MusicGen
-
-        This is a webui for MusicGen with 30+ second generation support.
-        
-        Models
-        1. Melody -- a music generation model capable of generating music condition on text and melody inputs. **Note**, you can also use text only.
-        2. Small -- a 300M transformer decoder conditioned on text only.
-        3. Medium -- a 1.5B transformer decoder conditioned on text only.
-        4. Large -- a 3.3B transformer decoder conditioned on text only (might OOM for the longest sequences.)
-
-        When the optional melody conditioning wav is provided, the model will extract
-        a broad melody and try to follow it in the generated samples. Only the first chunk of the song will
-        be generated with melody conditioning, the others will just continue on the first chunk.
-
-        Base duration of 30 seconds is recommended.
-        
-        Sliding window of 10/15/20 seconds is recommended.
-
-        Gradio analytics are disabled.
-        """
-    )
+    gr.Markdown("""# MusicGen""")
     with gr.Row():
         with gr.Column():
             with gr.Row():
                 text = gr.Text(label="Input Text", interactive=True)
-                melody = gr.Audio(source="upload", type="numpy", label="Melody Condition (optional)", interactive=True)
-            with gr.Row():
-                submit = gr.Button("Submit")
+                melody = gr.Audio(source="upload", type="numpy", label="Melody Condition (optional) SUPPORTS MELODY ONLY", interactive=True)
+                continue_file = gr.Audio(source="upload", type="filepath", label="Song to continue (optional) SUPPORTS ALL MODELS", interactive=True) 
+
             with gr.Row():
                 model = gr.Radio(["melody", "medium", "small", "large"], label="Model", value="melody", interactive=True)
             with gr.Row():
                 duration = gr.Slider(minimum=1, maximum=300, value=60, label="Duration", interactive=True)
                 base_duration = gr.Slider(minimum=1, maximum=30, value=30, label="Base duration", interactive=True)
                 sliding_window_seconds=gr.Slider(minimum=1, maximum=30, value=15, label="Sliding window", interactive=True)
+                cf_cutoff=gr.Slider(minimum=1, maximum=30, value=15, label="Continuing song cutoff", interactive=True)
             with gr.Row():
                 topk = gr.Number(label="Top-k", value=250, interactive=True)
                 topp = gr.Number(label="Top-p", value=0, interactive=True)
                 temperature = gr.Number(label="Temperature", value=1.0, interactive=True)
                 cfg_coef = gr.Number(label="Classifier Free Guidance", value=3.0, interactive=True)
-        with gr.Column():
-            output = gr.Audio(label="Generated Music", type="numpy")
-    submit.click(generate, inputs=[model, text, melody, duration, topk, topp, temperature, cfg_coef,base_duration, sliding_window_seconds], outputs=[output])
+            with gr.Row():
+                submit = gr.Button("Submit")
+            with gr.Row():
+                output = gr.Audio(label="Generated Music", type="numpy")
+            
+    submit.click(generate, inputs=[model, text, melody, duration, topk, topp, temperature, cfg_coef,base_duration, sliding_window_seconds, continue_file, cf_cutoff], outputs=[output])
     gr.Examples(
         fn=generate,
         examples=[
@@ -174,6 +174,27 @@ with gr.Blocks(analytics_enabled=False) as demo:
         ],
         inputs=[text, melody, model],
         outputs=[output]
+    )
+    gr.Markdown(
+        """
+        This is a webui for MusicGen with 30+ second generation support.
+        
+        Models
+        1. Melody -- a music generation model capable of generating music condition on text and melody inputs. **Note**, you can also use text only.
+        2. Small -- a 300M transformer decoder conditioned on text only.
+        3. Medium -- a 1.5B transformer decoder conditioned on text only.
+        4. Large -- a 3.3B transformer decoder conditioned on text only (might OOM for the longest sequences.) - recommended for continuing songs
+
+        When the optional melody conditioning wav is provided, the model will extract
+        a broad melody and try to follow it in the generated samples. Only the first chunk of the song will
+        be generated with melody conditioning, the others will just continue on the first chunk.
+
+        Base duration of 30 seconds is recommended.
+        
+        Sliding window of 10/15/20 seconds is recommended.
+
+        Gradio analytics are disabled.
+        """
     )
 
 
