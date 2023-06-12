@@ -3,6 +3,9 @@ Audiocraft is a PyTorch library made by Meta for deep learning research on audio
 
 ## Audiocraft infinity
 Adds generation of songs with a length of over 30 seconds.
+
+Adds the ability to continue songs.
+
 Disables (hopefully) the gradio analytics.
 
 ## Installation
