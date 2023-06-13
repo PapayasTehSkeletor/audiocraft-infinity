@@ -200,4 +200,4 @@ with gr.Blocks(analytics_enabled=False) as demo:
 
 
 
-demo.launch(share=True)
+demo.queue().launch(share=True)
